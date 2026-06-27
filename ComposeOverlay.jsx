@@ -18,7 +18,17 @@ const EDGE_GUTTER = 24;
 
 export function openCompose(init = {}) {
   const id = init.id || `compose-${Date.now()}`;
-  const draft = { id, subject: '', to: [], cc: [], bcc: [], fromAccountId: null, bodyHtml: '', ...init };
+  const draft = {
+    id,
+    subject: '',
+    to: [],
+    cc: [],
+    bcc: [],
+    fromAccountId: null,
+    fromName: '',
+    bodyHtml: '',
+    ...init,
+  };
   _openComposes = [..._openComposes.filter(c => c.id !== id), draft];
   if (_setComposes) _setComposes([..._openComposes]);
   return id;
@@ -60,13 +70,18 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
   const [fromAccountId, setFromAccountId] = useState(
     draft.fromAccountId || accounts[0]?.id || null
   );
+  const [fromName, setFromName] = useState(draft.fromName || '');
+  const [editingFromName, setEditingFromName] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const panelRef = useRef(null);
   const subjectRef = useRef(null);
+  const fromNameInputRef = useRef(null);
   const dragStateRef = useRef(null);
   const [position, setPosition] = useState(() => getInitialPanelPosition(stackIndex));
 
   const fromAccount = accounts.find(a => a.id === fromAccountId) || accounts[0];
+  const defaultFromName = getAccountDisplayName(fromAccount);
+  const effectiveFromName = fromName.trim() || defaultFromName || 'Unnamed sender';
 
   const editor = useEditor({
     extensions: [
@@ -91,6 +106,18 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     }
   }, [editor]);
 
+  useEffect(() => {
+    if (!fromAccountId && accounts[0]?.id) {
+      setFromAccountId(accounts[0].id);
+    }
+  }, [accounts, fromAccountId]);
+
+  useEffect(() => {
+    if (!editingFromName) return;
+    fromNameInputRef.current?.focus();
+    fromNameInputRef.current?.select();
+  }, [editingFromName]);
+
   // Optimistic send — fire and forget, close immediately
   const handleSend = useCallback(async () => {
     const recipients = [...to];
@@ -110,7 +137,7 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     const payload = {
       account_id: fromAccount?.id,
       from_email: fromAccount?.email,
-      from_name: fromAccount?.display_name || fromAccount?.name,
+      from_name: effectiveFromName,
       to: recipients,
       cc,
       subject,
@@ -132,7 +159,7 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     } catch {
       showNotification('Send queued — will retry', 'info');
     }
-  }, [to, toInput, cc, subject, editor, fromAccount, attachments, draft, onClose, showNotification]);
+  }, [to, toInput, cc, subject, editor, fromAccount, effectiveFromName, attachments, draft, onClose, showNotification]);
 
   // Ctrl+Enter sends
   useEffect(() => {
@@ -175,6 +202,11 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
       const att = await window.electronAPI.compose.uploadAttachment(fp);
       if (att) setAttachments(p => [...p, att]);
     }
+  }
+
+  function commitFromNameEdit() {
+    setFromName(prev => prev.trim());
+    setEditingFromName(false);
   }
 
   const handleDragStart = useCallback((event) => {
@@ -250,17 +282,68 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
       </div>
 
       {/* From */}
-      <div className="co-field-row">
+      <div className="co-field-row co-field-row-from">
         <span className="co-label">From</span>
-        <select
-          className="co-from-select"
-          value={fromAccountId || ''}
-          onChange={e => setFromAccountId(e.target.value)}
-        >
-          {accounts.map(acc => (
-            <option key={acc.id} value={acc.id}>{acc.email}</option>
-          ))}
-        </select>
+        <div className="co-from-wrap">
+          <div className="co-from-display-row">
+            <div className="co-from-identity">
+              {editingFromName ? (
+                <>
+                  <input
+                    ref={fromNameInputRef}
+                    className="co-from-name-input"
+                    value={fromName}
+                    placeholder={defaultFromName || 'Display name'}
+                    onChange={e => setFromName(e.target.value)}
+                    onBlur={commitFromNameEdit}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitFromNameEdit();
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setEditingFromName(false);
+                      }
+                    }}
+                  />
+                  {fromAccount?.email && (
+                    <span className="co-from-email">&lt;{fromAccount.email}&gt;</span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className="co-from-name-text">{effectiveFromName}</span>
+                  {fromAccount?.email && (
+                    <span className="co-from-email">&lt;{fromAccount.email}&gt;</span>
+                  )}
+                </>
+              )}
+            </div>
+            <button
+              type="button"
+              className="co-from-edit-btn"
+              onClick={() => {
+                if (editingFromName) commitFromNameEdit();
+                else setEditingFromName(true);
+              }}
+            >
+              {editingFromName ? 'done' : 'edit name'}
+            </button>
+          </div>
+          <select
+            className="co-from-select"
+            value={fromAccountId || ''}
+            onChange={e => setFromAccountId(e.target.value)}
+          >
+            {accounts.map(acc => (
+              <option key={acc.id} value={acc.id}>
+                {getAccountDisplayName(acc) || acc.email}
+                {acc.email ? ` <${acc.email}>` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* To */}
@@ -409,4 +492,8 @@ function getMinimizedLeft(stackIndex) {
   const totalWidth = MINIMIZED_WIDTH + PANEL_OFFSET;
   const preferred = window.innerWidth - EDGE_GUTTER - MINIMIZED_WIDTH - stackIndex * totalWidth;
   return Math.max(EDGE_GUTTER, preferred);
+}
+
+function getAccountDisplayName(account) {
+  return account?.display_name || account?.name || '';
 }
