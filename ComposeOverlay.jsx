@@ -10,6 +10,11 @@ import './ComposeOverlay.css';
 // Global compose state — lives outside React so it survives re-renders
 let _openComposes = [];
 let _setComposes = null;
+const PANEL_WIDTH = 520;
+const PANEL_MIN_HEIGHT = 420;
+const PANEL_OFFSET = 28;
+const MINIMIZED_WIDTH = 220;
+const EDGE_GUTTER = 24;
 
 export function openCompose(init = {}) {
   const id = init.id || `compose-${Date.now()}`;
@@ -58,6 +63,8 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
   const [attachments, setAttachments] = useState([]);
   const panelRef = useRef(null);
   const subjectRef = useRef(null);
+  const dragStateRef = useRef(null);
+  const [position, setPosition] = useState(() => getInitialPanelPosition(stackIndex));
 
   const fromAccount = accounts.find(a => a.id === fromAccountId) || accounts[0];
 
@@ -140,6 +147,15 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     return () => window.removeEventListener('keydown', handler);
   }, [handleSend, onClose]);
 
+  useEffect(() => {
+    const onResize = () => {
+      setPosition((prev) => clampPanelPosition(prev, panelRef.current));
+    };
+
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   function addTag(type, raw) {
     const emails = raw.split(/[,;\s]+/).filter(e => e.includes('@'));
     if (!emails.length) return;
@@ -161,12 +177,50 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     }
   }
 
-  // Right-stack positioning: each panel offset from right
-  const right = 20 + stackIndex * 340;
+  const handleDragStart = useCallback((event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest('button, input, select, textarea, a')) return;
+
+    event.preventDefault();
+
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: position.x,
+      originY: position.y,
+    };
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }, [position.x, position.y]);
+
+  const handleDragMove = useCallback((event) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const next = {
+      x: drag.originX + (event.clientX - drag.startX),
+      y: drag.originY + (event.clientY - drag.startY),
+    };
+
+    setPosition(clampPanelPosition(next, panelRef.current));
+  }, []);
+
+  const handleDragEnd = useCallback((event) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    dragStateRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }, []);
 
   if (minimized) {
     return (
-      <div className="compose-minimized" style={{ right }} onClick={() => setMinimized(false)}>
+      <div
+        className="compose-minimized"
+        style={{ left: getMinimizedLeft(stackIndex) }}
+        onClick={() => setMinimized(false)}
+      >
         <span className="compose-min-icon">◈</span>
         <span className="compose-min-subject">{subject || 'New Message'}</span>
         <button className="compose-min-close" onClick={e => { e.stopPropagation(); onClose(); }}>✕</button>
@@ -175,9 +229,19 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
   }
 
   return (
-    <div className="compose-overlay-panel" style={{ right }} ref={panelRef}>
+    <div
+      className="compose-overlay-panel"
+      style={{ left: position.x, top: position.y }}
+      ref={panelRef}
+    >
       {/* Header bar — drag handle */}
-      <div className="co-header">
+      <div
+        className="co-header"
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
+        onPointerCancel={handleDragEnd}
+      >
         <span className="co-title">◈ {subject || 'New Message'}</span>
         <div className="co-header-actions">
           <button className="co-btn" onClick={() => setMinimized(true)} title="Minimize">─</button>
@@ -307,4 +371,42 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
       </div>
     </div>
   );
+}
+
+function getInitialPanelPosition(stackIndex) {
+  if (typeof window === 'undefined') {
+    return { x: EDGE_GUTTER, y: EDGE_GUTTER };
+  }
+
+  const viewportWidth = window.innerWidth || 1280;
+  const viewportHeight = window.innerHeight || 800;
+  const centeredX = Math.round((viewportWidth - PANEL_WIDTH) / 2);
+  const centeredY = Math.round((viewportHeight - PANEL_MIN_HEIGHT) / 2);
+
+  return clampPanelPosition({
+    x: centeredX + stackIndex * PANEL_OFFSET,
+    y: centeredY + stackIndex * PANEL_OFFSET,
+  });
+}
+
+function clampPanelPosition(position, panelEl) {
+  if (typeof window === 'undefined') return position;
+
+  const panelWidth = panelEl?.offsetWidth || PANEL_WIDTH;
+  const panelHeight = panelEl?.offsetHeight || PANEL_MIN_HEIGHT;
+  const maxX = Math.max(EDGE_GUTTER, window.innerWidth - panelWidth - EDGE_GUTTER);
+  const maxY = Math.max(EDGE_GUTTER, window.innerHeight - panelHeight - EDGE_GUTTER);
+
+  return {
+    x: Math.min(Math.max(position.x, EDGE_GUTTER), maxX),
+    y: Math.min(Math.max(position.y, EDGE_GUTTER), maxY),
+  };
+}
+
+function getMinimizedLeft(stackIndex) {
+  if (typeof window === 'undefined') return EDGE_GUTTER;
+
+  const totalWidth = MINIMIZED_WIDTH + PANEL_OFFSET;
+  const preferred = window.innerWidth - EDGE_GUTTER - MINIMIZED_WIDTH - stackIndex * totalWidth;
+  return Math.max(EDGE_GUTTER, preferred);
 }
