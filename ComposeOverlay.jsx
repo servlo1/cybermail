@@ -6,14 +6,31 @@ import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import useStore from '../store/useStore';
 import './ComposeOverlay.css';
+import { buildComposeInitialBody } from './composeSignature';
+import { getSignatureSettings } from './signatureApi';
 
 // Global compose state — lives outside React so it survives re-renders
 let _openComposes = [];
 let _setComposes = null;
+const PANEL_WIDTH = 520;
+const PANEL_MIN_HEIGHT = 420;
+const PANEL_OFFSET = 28;
+const MINIMIZED_WIDTH = 220;
+const EDGE_GUTTER = 24;
 
 export function openCompose(init = {}) {
   const id = init.id || `compose-${Date.now()}`;
-  const draft = { id, subject: '', to: [], cc: [], bcc: [], fromAccountId: null, bodyHtml: '', ...init };
+  const draft = {
+    id,
+    subject: '',
+    to: [],
+    cc: [],
+    bcc: [],
+    fromAccountId: null,
+    fromName: '',
+    bodyHtml: '',
+    ...init,
+  };
   _openComposes = [..._openComposes.filter(c => c.id !== id), draft];
   if (_setComposes) _setComposes([..._openComposes]);
   return id;
@@ -47,19 +64,29 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
   const { accounts, showNotification } = useStore();
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   const [to, setTo] = useState(draft.to || []);
   const [cc, setCc] = useState(draft.cc || []);
+  const [bcc, setBcc] = useState(draft.bcc || []);
   const [subject, setSubject] = useState(draft.subject || '');
   const [showCc, setShowCc] = useState((draft.cc||[]).length > 0);
+  const [showBcc, setShowBcc] = useState((draft.bcc||[]).length > 0);
   const [minimized, setMinimized] = useState(false);
   const [fromAccountId, setFromAccountId] = useState(
     draft.fromAccountId || accounts[0]?.id || null
   );
+  const [fromName, setFromName] = useState(draft.fromName || '');
+  const [editingFromName, setEditingFromName] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const panelRef = useRef(null);
   const subjectRef = useRef(null);
+  const fromNameInputRef = useRef(null);
+  const dragStateRef = useRef(null);
+  const [position, setPosition] = useState(() => getInitialPanelPosition(stackIndex));
 
   const fromAccount = accounts.find(a => a.id === fromAccountId) || accounts[0];
+  const defaultFromName = getAccountDisplayName(fromAccount);
+  const effectiveFromName = fromName.trim() || defaultFromName || 'Unnamed sender';
 
   const editor = useEditor({
     extensions: [
@@ -74,15 +101,30 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
 
   // Load signature on mount
   useEffect(() => {
-    if (!draft.bodyHtml && window.electronAPI) {
-      window.electronAPI.settings.getSignature().then(sig => {
-        if (sig?.html && editor) {
-          editor.commands.setContent(`<p><br></p><p><br></p>${sig.html}`);
+    if (!draft.bodyHtml) {
+      getSignatureSettings().then(sig => {
+        if (editor) {
+          editor.commands.setContent(buildComposeInitialBody(sig?.html, {
+            replyToId: draft.replyToId,
+            forwardOfId: draft.forwardOfId,
+          }));
           editor.commands.focus('start');
         }
       }).catch(() => {});
     }
-  }, [editor]);
+  }, [draft.bodyHtml, draft.forwardOfId, draft.replyToId, editor]);
+
+  useEffect(() => {
+    if (!fromAccountId && accounts[0]?.id) {
+      setFromAccountId(accounts[0].id);
+    }
+  }, [accounts, fromAccountId]);
+
+  useEffect(() => {
+    if (!editingFromName) return;
+    fromNameInputRef.current?.focus();
+    fromNameInputRef.current?.select();
+  }, [editingFromName]);
 
   // Optimistic send — fire and forget, close immediately
   const handleSend = useCallback(async () => {
@@ -103,14 +145,16 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     const payload = {
       account_id: fromAccount?.id,
       from_email: fromAccount?.email,
-      from_name: fromAccount?.display_name || fromAccount?.name,
+      from_name: effectiveFromName,
       to: recipients,
       cc,
+      bcc,
       subject,
       body_html: editor?.getHTML() || '',
       body_text: editor?.getText() || '',
       attachment_ids: attachments.map(a => a.id),
       reply_to_id: draft.replyToId,
+      forward_of_id: draft.forwardOfId,
     };
 
     try {
@@ -125,7 +169,7 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     } catch {
       showNotification('Send queued — will retry', 'info');
     }
-  }, [to, toInput, cc, subject, editor, fromAccount, attachments, draft, onClose, showNotification]);
+  }, [to, toInput, cc, bcc, subject, editor, fromAccount, effectiveFromName, attachments, draft, onClose, showNotification]);
 
   // Ctrl+Enter sends
   useEffect(() => {
@@ -140,16 +184,27 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     return () => window.removeEventListener('keydown', handler);
   }, [handleSend, onClose]);
 
+  useEffect(() => {
+    const onResize = () => {
+      setPosition((prev) => clampPanelPosition(prev, panelRef.current));
+    };
+
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   function addTag(type, raw) {
     const emails = raw.split(/[,;\s]+/).filter(e => e.includes('@'));
     if (!emails.length) return;
     if (type === 'to') { setTo(p => [...p, ...emails]); setToInput(''); }
-    else { setCc(p => [...p, ...emails]); setCcInput(''); }
+    else if (type === 'cc') { setCc(p => [...p, ...emails]); setCcInput(''); }
+    else { setBcc(p => [...p, ...emails]); setBccInput(''); }
   }
 
   function removeTag(type, email) {
     if (type === 'to') setTo(p => p.filter(e => e !== email));
-    else setCc(p => p.filter(e => e !== email));
+    else if (type === 'cc') setCc(p => p.filter(e => e !== email));
+    else setBcc(p => p.filter(e => e !== email));
   }
 
   async function handleAttach() {
@@ -161,12 +216,55 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     }
   }
 
-  // Right-stack positioning: each panel offset from right
-  const right = 20 + stackIndex * 340;
+  function commitFromNameEdit() {
+    setFromName(prev => prev.trim());
+    setEditingFromName(false);
+  }
+
+  const handleDragStart = useCallback((event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest('button, input, select, textarea, a')) return;
+
+    event.preventDefault();
+
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: position.x,
+      originY: position.y,
+    };
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }, [position.x, position.y]);
+
+  const handleDragMove = useCallback((event) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const next = {
+      x: drag.originX + (event.clientX - drag.startX),
+      y: drag.originY + (event.clientY - drag.startY),
+    };
+
+    setPosition(clampPanelPosition(next, panelRef.current));
+  }, []);
+
+  const handleDragEnd = useCallback((event) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    dragStateRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  }, []);
 
   if (minimized) {
     return (
-      <div className="compose-minimized" style={{ right }} onClick={() => setMinimized(false)}>
+      <div
+        className="compose-minimized"
+        style={{ left: getMinimizedLeft(stackIndex) }}
+        onClick={() => setMinimized(false)}
+      >
         <span className="compose-min-icon">◈</span>
         <span className="compose-min-subject">{subject || 'New Message'}</span>
         <button className="compose-min-close" onClick={e => { e.stopPropagation(); onClose(); }}>✕</button>
@@ -175,9 +273,19 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
   }
 
   return (
-    <div className="compose-overlay-panel" style={{ right }} ref={panelRef}>
+    <div
+      className="compose-overlay-panel"
+      style={{ left: position.x, top: position.y }}
+      ref={panelRef}
+    >
       {/* Header bar — drag handle */}
-      <div className="co-header">
+      <div
+        className="co-header"
+        onPointerDown={handleDragStart}
+        onPointerMove={handleDragMove}
+        onPointerUp={handleDragEnd}
+        onPointerCancel={handleDragEnd}
+      >
         <span className="co-title">◈ {subject || 'New Message'}</span>
         <div className="co-header-actions">
           <button className="co-btn" onClick={() => setMinimized(true)} title="Minimize">─</button>
@@ -186,17 +294,68 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
       </div>
 
       {/* From */}
-      <div className="co-field-row">
+      <div className="co-field-row co-field-row-from">
         <span className="co-label">From</span>
-        <select
-          className="co-from-select"
-          value={fromAccountId || ''}
-          onChange={e => setFromAccountId(e.target.value)}
-        >
-          {accounts.map(acc => (
-            <option key={acc.id} value={acc.id}>{acc.email}</option>
-          ))}
-        </select>
+        <div className="co-from-wrap">
+          <div className="co-from-display-row">
+            <div className="co-from-identity">
+              {editingFromName ? (
+                <>
+                  <input
+                    ref={fromNameInputRef}
+                    className="co-from-name-input"
+                    value={fromName}
+                    placeholder={defaultFromName || 'Display name'}
+                    onChange={e => setFromName(e.target.value)}
+                    onBlur={commitFromNameEdit}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitFromNameEdit();
+                      }
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setEditingFromName(false);
+                      }
+                    }}
+                  />
+                  {fromAccount?.email && (
+                    <span className="co-from-email">&lt;{fromAccount.email}&gt;</span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className="co-from-name-text">{effectiveFromName}</span>
+                  {fromAccount?.email && (
+                    <span className="co-from-email">&lt;{fromAccount.email}&gt;</span>
+                  )}
+                </>
+              )}
+            </div>
+            <button
+              type="button"
+              className="co-from-edit-btn"
+              onClick={() => {
+                if (editingFromName) commitFromNameEdit();
+                else setEditingFromName(true);
+              }}
+            >
+              {editingFromName ? 'done' : 'edit name'}
+            </button>
+          </div>
+          <select
+            className="co-from-select"
+            value={fromAccountId || ''}
+            onChange={e => setFromAccountId(e.target.value)}
+          >
+            {accounts.map(acc => (
+              <option key={acc.id} value={acc.id}>
+                {getAccountDisplayName(acc) || acc.email}
+                {acc.email ? ` <${acc.email}>` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* To */}
@@ -221,9 +380,14 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
             onBlur={() => toInput.trim() && addTag('to', toInput)}
           />
         </div>
-        {!showCc && (
-          <button className="co-extra-btn" onClick={() => setShowCc(true)}>CC</button>
-        )}
+        <div className="co-field-extras">
+          {!showCc && (
+            <button className="co-extra-btn" onClick={() => setShowCc(true)}>CC</button>
+          )}
+          {!showBcc && (
+            <button className="co-extra-btn" onClick={() => setShowBcc(true)}>BCC</button>
+          )}
+        </div>
       </div>
 
       {/* CC */}
@@ -245,6 +409,30 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
                 if (['Enter','Tab',',',' '].includes(e.key)) { e.preventDefault(); addTag('cc', ccInput); }
               }}
               onBlur={() => ccInput.trim() && addTag('cc', ccInput)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* BCC */}
+      {showBcc && (
+        <div className="co-field-row">
+          <span className="co-label">BCC</span>
+          <div className="co-tags-wrap">
+            {bcc.map(e => (
+              <span key={e} className="co-tag">
+                {e}<button onClick={() => removeTag('bcc', e)}>×</button>
+              </span>
+            ))}
+            <input
+              className="co-tag-input"
+              value={bccInput}
+              placeholder="bcc@email.com"
+              onChange={e => setBccInput(e.target.value)}
+              onKeyDown={e => {
+                if (['Enter','Tab',',',' '].includes(e.key)) { e.preventDefault(); addTag('bcc', bccInput); }
+              }}
+              onBlur={() => bccInput.trim() && addTag('bcc', bccInput)}
             />
           </div>
         </div>
@@ -307,4 +495,46 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
       </div>
     </div>
   );
+}
+
+function getInitialPanelPosition(stackIndex) {
+  if (typeof window === 'undefined') {
+    return { x: EDGE_GUTTER, y: EDGE_GUTTER };
+  }
+
+  const viewportWidth = window.innerWidth || 1280;
+  const viewportHeight = window.innerHeight || 800;
+  const centeredX = Math.round((viewportWidth - PANEL_WIDTH) / 2);
+  const centeredY = Math.round((viewportHeight - PANEL_MIN_HEIGHT) / 2);
+
+  return clampPanelPosition({
+    x: centeredX + stackIndex * PANEL_OFFSET,
+    y: centeredY + stackIndex * PANEL_OFFSET,
+  });
+}
+
+function clampPanelPosition(position, panelEl) {
+  if (typeof window === 'undefined') return position;
+
+  const panelWidth = panelEl?.offsetWidth || PANEL_WIDTH;
+  const panelHeight = panelEl?.offsetHeight || PANEL_MIN_HEIGHT;
+  const maxX = Math.max(EDGE_GUTTER, window.innerWidth - panelWidth - EDGE_GUTTER);
+  const maxY = Math.max(EDGE_GUTTER, window.innerHeight - panelHeight - EDGE_GUTTER);
+
+  return {
+    x: Math.min(Math.max(position.x, EDGE_GUTTER), maxX),
+    y: Math.min(Math.max(position.y, EDGE_GUTTER), maxY),
+  };
+}
+
+function getMinimizedLeft(stackIndex) {
+  if (typeof window === 'undefined') return EDGE_GUTTER;
+
+  const totalWidth = MINIMIZED_WIDTH + PANEL_OFFSET;
+  const preferred = window.innerWidth - EDGE_GUTTER - MINIMIZED_WIDTH - stackIndex * totalWidth;
+  return Math.max(EDGE_GUTTER, preferred);
+}
+
+function getAccountDisplayName(account) {
+  return account?.display_name || account?.name || '';
 }

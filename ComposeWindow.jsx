@@ -5,6 +5,8 @@ import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import './ComposeWindow.css';
+import { buildComposeInitialBody, prepareComposeBody } from './composeSignature';
+import { getSignatureSettings } from './signatureApi';
 
 const EMAIL_RE = /^[^\s@<>(),;:"']+@[^\s@<>(),;:"']+\.[^\s@<>(),;:"']+$/i;
 const ADDRESS_SPLIT_RE = /[,;\s]+/;
@@ -13,8 +15,10 @@ const AUTOSAVE_MS = 2500;
 export default function ComposePage() {
   const params = new URLSearchParams(window.location.search);
   const queryDraftId = params.get('draftId');
-  const draftId = queryDraftId || `draft-${Date.now()}`;
+  const draftIdRef = useRef(queryDraftId || createDraftId());
   const mode = params.get('mode') || 'new';
+  const initialReplyToId = params.get('replyToId');
+  const initialForwardOfId = params.get('forwardOfId');
 
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -25,6 +29,8 @@ export default function ComposePage() {
   const [subject, setSubject] = useState('');
   const [templates, setTemplates] = useState([]);
   const [attachments, setAttachments] = useState([]);
+  const [replyToId, setReplyToId] = useState(initialReplyToId || null);
+  const [forwardOfId, setForwardOfId] = useState(initialForwardOfId || null);
 
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
@@ -87,7 +93,7 @@ export default function ComposePage() {
     const parsedBcc = parseAddressInput(bccInput);
 
     return {
-      id: draftId,
+      id: draftIdRef.current,
       mode,
       account_id: selectedAccount?.id || null,
       from_email: selectedAccount?.email || '',
@@ -100,13 +106,15 @@ export default function ComposePage() {
       bcc_input: bccInput,
       subject: subject.trim(),
       attachment_ids: attachments.map((item) => item.id),
+      reply_to_id: replyToId,
+      forward_of_id: forwardOfId,
       invalid_inputs: {
         to: parsedTo.invalid,
         cc: parsedCc.invalid,
         bcc: parsedBcc.invalid,
       },
     };
-  }, [attachments, bcc, bccInput, cc, ccInput, draftId, fromName, mode, selectedAccount, subject, to, toInput]);
+  }, [attachments, bcc, bccInput, cc, ccInput, forwardOfId, fromName, mode, replyToId, selectedAccount, subject, to, toInput]);
 
   const saveDraft = useCallback(async (silent = true) => {
     if (!window.electronAPI?.compose?.saveDraft || !editor) return null;
@@ -116,10 +124,15 @@ export default function ComposePage() {
 
       const result = await window.electronAPI.compose.saveDraft({
         ...payload,
-        body_html: ensureSignature(editor.getHTML(), signatureRef.current),
+        body_html: prepareComposeBody(editor.getHTML(), signatureRef.current, {
+          mode,
+          replyToId,
+          forwardOfId,
+        }),
         body_text: editor.getText(),
       });
 
+      if (result?.id) draftIdRef.current = result.id;
       dirtyRef.current = false;
 
       if (!silent) setStatus('Draft saved', 'success');
@@ -139,6 +152,7 @@ export default function ComposePage() {
 
       const draft = await window.electronAPI.compose.getDraft(existingDraftId);
       if (!draft) return;
+      if (draft.id) draftIdRef.current = draft.id;
 
       setSubject(draft.subject || '');
       setTo(Array.isArray(draft.to_addresses) ? draft.to_addresses : []);
@@ -149,6 +163,8 @@ export default function ComposePage() {
       setBccInput(draft.bcc_input || '');
       setAttachments(Array.isArray(draft.attachments) ? draft.attachments : []);
       setFromName(draft.from_name || '');
+      setReplyToId(draft.reply_to_id || null);
+      setForwardOfId(draft.forward_of_id || null);
       setShowCC(Boolean((draft.cc_addresses || []).length || draft.cc_input));
       setShowBCC(Boolean((draft.bcc_addresses || []).length || draft.bcc_input));
       setShowFromName(Boolean(draft.from_name));
@@ -159,7 +175,11 @@ export default function ComposePage() {
       }
 
       editor.commands.setContent(
-        draft.body_html || buildInitialBody(signatureRef.current)
+        draft.body_html || buildComposeInitialBody(signatureRef.current, {
+          mode,
+          replyToId: draft.reply_to_id,
+          forwardOfId: draft.forward_of_id,
+        })
       );
 
       setFieldErrors({ to: '', cc: '', bcc: '', from: '' });
@@ -247,12 +267,18 @@ export default function ComposePage() {
 
     if (template?.subject) setSubject(template.subject);
 
-    const html = ensureSignature(template?.body_html || '', signatureRef.current);
-    editor.commands.setContent(html || buildInitialBody(signatureRef.current));
+    const html = prepareComposeBody(template?.body_html || '', signatureRef.current, {
+      mode,
+      replyToId,
+      forwardOfId,
+    });
+    editor.commands.setContent(
+      html || buildComposeInitialBody(signatureRef.current, { mode, replyToId, forwardOfId })
+    );
     setShowTemplates(false);
     markDirty();
     setStatus('Template inserted', 'success');
-  }, [editor, markDirty, setStatus]);
+  }, [editor, forwardOfId, markDirty, mode, replyToId, setStatus]);
 
   const toggleAlwaysOnTop = useCallback(() => {
     const next = !alwaysOnTop;
@@ -296,15 +322,20 @@ export default function ComposePage() {
 
     const finalPayload = {
       ...payload,
-      draft_id: draftId,
-      body_html: ensureSignature(editor.getHTML(), signatureRef.current),
+      draft_id: draftIdRef.current,
+      body_html: prepareComposeBody(editor.getHTML(), signatureRef.current, {
+        mode,
+        replyToId,
+        forwardOfId,
+      }),
       body_text: editor.getText(),
       close_after_queue: true,
       sent_from_window: 'compose',
     };
 
     try {
-      window.electronAPI.compose.send(finalPayload)
+      const sendRequest = window.electronAPI.compose.send(finalPayload);
+      sendRequest
         .then((result) => {
           if (!(result?.queued || result?.accepted || result?.success)) {
             console.warn('[Compose] send result:', result);
@@ -314,13 +345,17 @@ export default function ComposePage() {
           console.error('[Compose] send failed:', error);
         });
 
-      window.electronAPI?.compose?.notifySendQueued?.({
-        draftId,
-        from: finalPayload.from_email,
-        to: finalPayload.to,
-        subject: finalPayload.subject,
-        queuedAt: Date.now(),
-      });
+      try {
+        window.electronAPI?.compose?.notifySendQueued?.({
+          draftId: finalPayload.draft_id || finalPayload.id,
+          from: finalPayload.from_email,
+          to: finalPayload.to,
+          subject: finalPayload.subject,
+          queuedAt: Date.now(),
+        });
+      } catch (error) {
+        console.warn('[Compose] queue notification failed:', error);
+      }
 
       window.close();
     } catch (error) {
@@ -329,7 +364,7 @@ export default function ComposePage() {
       setSendState('error');
       setStatus('Could not queue message', 'error');
     }
-  }, [addAddresses, buildPayload, draftId, editor, setStatus]);
+  }, [addAddresses, buildPayload, editor, forwardOfId, mode, replyToId, setStatus]);
 
   const handleEditorDrop = useCallback(async (event) => {
     const files = Array.from(event.dataTransfer?.files || []);
@@ -348,7 +383,7 @@ export default function ComposePage() {
         const [accountList, templateList, signature] = await Promise.all([
           window.electronAPI.accounts?.list?.() || [],
           window.electronAPI.settings?.getTemplates?.() || [],
-          window.electronAPI.settings?.getSignature?.().catch(() => null),
+          getSignatureSettings(),
         ]);
 
         if (cancelled) return;
@@ -364,7 +399,13 @@ export default function ComposePage() {
           const account = nextAccounts[0] || null;
           setSelectedAccount(account);
           setFromName(account?.display_name || account?.name || '');
-          editor.commands.setContent(buildInitialBody(signatureRef.current));
+          editor.commands.setContent(
+            buildComposeInitialBody(signatureRef.current, {
+              mode,
+              replyToId,
+              forwardOfId,
+            })
+          );
           dirtyRef.current = false;
         }
       } catch (error) {
@@ -387,7 +428,7 @@ export default function ComposePage() {
     };
 
     const onBeforeUnload = () => {
-      if (dirtyRef.current) void saveDraft(true);
+      if (dirtyRef.current && !sendLockRef.current) void saveDraft(true);
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -399,52 +440,85 @@ export default function ComposePage() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('beforeunload', onBeforeUnload);
     };
-  }, [editor, handleSend, loadDraft, queryDraftId, saveDraft, setStatus]);
+  }, [editor, forwardOfId, handleSend, loadDraft, mode, queryDraftId, replyToId, saveDraft, setStatus]);
 
   if (!editor) {
-    return <div className="compose-loading">Initializing compose window…</div>;
+    return (
+      <div className="compose-loading">
+        <div className="compose-loading-inner">
+          <span className="compose-loading-mark">◈</span>
+          <span>Initializing compose window…</span>
+        </div>
+      </div>
+    );
   }
+
+  const windowTitle = subject.trim() || 'New message';
+  const fromAccountLabel = selectedAccount?.email || 'Select an account';
+  const templateLabel = templates.length === 1 ? '1 template' : `${templates.length} templates`;
+  const attachmentLabel = attachments.length === 1 ? '1 attachment' : `${attachments.length} attachments`;
 
   return (
     <div className="compose-window">
-      <div className="compose-toolbar">
-        <div className="compose-toolbar-left">
-          <div className="compose-title">{subject || 'NEW MESSAGE'}</div>
+      <div className="compose-header">
+        <div className="compose-header-copy">
+          <div className="compose-kicker">Compose</div>
+          <div className="compose-title-row">
+            <div className="compose-title">{windowTitle}</div>
+            <span className={`compose-state-pill ${sendState === 'sending' ? 'sending' : ''}`}>
+              {sendState === 'sending' ? 'Queueing' : 'Ready'}
+            </span>
+          </div>
+          <div className="compose-header-meta">
+            <span className="compose-meta-pill">{fromAccountLabel}</span>
+            <span className="compose-meta-pill">{templateLabel}</span>
+            <span className="compose-meta-pill">{attachmentLabel}</span>
+          </div>
         </div>
 
-        <div className="compose-toolbar-right">
+        <div className="compose-header-actions">
           <button
-            className={`toolbar-btn ${alwaysOnTop ? 'active' : ''}`}
+            className={`toolbar-btn compact ${alwaysOnTop ? 'active' : ''}`}
             onClick={toggleAlwaysOnTop}
             title="Pin window"
+            data-tooltip="Always on top"
+            type="button"
           >
             Pin
           </button>
           <button
-            className="toolbar-btn"
+            className="toolbar-btn compact"
             onClick={() => void saveDraft(false)}
             title="Save draft"
+            data-tooltip="Save draft"
+            type="button"
           >
             Save
           </button>
           <button
-            className="toolbar-btn"
+            className="toolbar-btn compact"
             onClick={() => void handleAttach()}
             title="Attach files"
+            data-tooltip="Attach files"
+            type="button"
           >
             Attach
           </button>
           <button
-            className={`toolbar-btn ${showFromName ? 'active' : ''}`}
+            className={`toolbar-btn compact ${showFromName ? 'active' : ''}`}
             onClick={() => setShowFromName((prev) => !prev)}
             title="Toggle From Name"
+            data-tooltip="Display name"
+            type="button"
           >
-            Name
+            From Name
           </button>
           <button
-            className={`toolbar-btn ${showTemplates ? 'active' : ''}`}
+            className={`toolbar-btn compact ${showTemplates ? 'active' : ''}`}
             onClick={() => setShowTemplates((prev) => !prev)}
             title="Templates"
+            data-tooltip="Insert template"
+            type="button"
           >
             Templates
           </button>
@@ -453,7 +527,10 @@ export default function ComposePage() {
 
       {showTemplates && (
         <div className="template-dropdown">
-          <div className="template-header">Insert Template</div>
+          <div className="template-header-row">
+            <div className="template-header">Insert Template</div>
+            <div className="template-count">{templates.length}</div>
+          </div>
           {templates.length === 0 ? (
             <div className="template-empty">No templates saved.</div>
           ) : (
@@ -462,6 +539,7 @@ export default function ComposePage() {
                 key={template.id || template.name}
                 className="template-item"
                 onClick={() => insertTemplate(template)}
+                type="button"
               >
                 {template.name}
               </button>
@@ -486,6 +564,14 @@ export default function ComposePage() {
                 </option>
               ))}
             </select>
+
+            <button
+              className={`inline-toggle ${showFromName ? 'active' : ''}`}
+              onClick={() => setShowFromName((prev) => !prev)}
+              type="button"
+            >
+              Name
+            </button>
 
             {showFromName && (
               <input
@@ -536,12 +622,12 @@ export default function ComposePage() {
 
           <div className="field-extras">
             {!showCC && (
-              <button className="extra-btn" onClick={() => setShowCC(true)}>
+              <button className="extra-btn" onClick={() => setShowCC(true)} type="button">
                 CC
               </button>
             )}
             {!showBCC && (
-              <button className="extra-btn" onClick={() => setShowBCC(true)}>
+              <button className="extra-btn" onClick={() => setShowBCC(true)} type="button">
                 BCC
               </button>
             )}
@@ -626,138 +712,154 @@ export default function ComposePage() {
         </div>
       </div>
 
-      <div className="editor-toolbar">
-        <button
-          className={`editor-btn ${editor.isActive('bold') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleBold().run();
-          }}
-          title="Bold"
+      <div className="compose-editor-panel">
+        <div className="editor-toolbar">
+          <button
+            className={`editor-btn ${editor.isActive('bold') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleBold().run();
+            }}
+            title="Bold"
+            type="button"
+          >
+            B
+          </button>
+
+          <button
+            className={`editor-btn italic-btn ${editor.isActive('italic') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleItalic().run();
+            }}
+            title="Italic"
+            type="button"
+          >
+            I
+          </button>
+
+          <button
+            className={`editor-btn underline-btn ${editor.isActive('underline') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleUnderline().run();
+            }}
+            title="Underline"
+            type="button"
+          >
+            U
+          </button>
+
+          <div className="editor-toolbar-divider" />
+
+          <button
+            className={`editor-btn ${editor.isActive('bulletList') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleBulletList().run();
+            }}
+            title="Bullet list"
+            type="button"
+          >
+            •
+          </button>
+
+          <button
+            className={`editor-btn ${editor.isActive('orderedList') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleOrderedList().run();
+            }}
+            title="Numbered list"
+            type="button"
+          >
+            1.
+          </button>
+
+          <div className="editor-toolbar-divider" />
+
+          <button
+            className="editor-btn"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().sinkListItem('listItem').run();
+            }}
+            title="Indent"
+            type="button"
+          >
+            &gt;
+          </button>
+
+          <button
+            className="editor-btn"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().liftListItem('listItem').run();
+            }}
+            title="Outdent"
+            type="button"
+          >
+            &lt;
+          </button>
+
+          <div className="editor-toolbar-divider" />
+
+          <button
+            className={`editor-btn ${editor.isActive('link') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              const currentLink = editor.getAttributes('link').href || '';
+              const nextLink = window.prompt('Enter URL', currentLink);
+
+              if (nextLink === null) return;
+              if (!nextLink.trim()) {
+                editor.chain().focus().unsetLink().run();
+                return;
+              }
+
+              editor.chain().focus().extendMarkRange('link').setLink({ href: nextLink.trim() }).run();
+            }}
+            title="Link"
+            type="button"
+          >
+            Link
+          </button>
+
+          <button
+            className="editor-btn"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().unsetAllMarks().clearNodes().run();
+            }}
+            title="Clear formatting"
+            type="button"
+          >
+            Clear
+          </button>
+
+          <div className="editor-toolbar-spacer" />
+          <div className="editor-toolbar-hint">Drop files here or press Ctrl+Enter to send</div>
+        </div>
+
+        <div
+          className="compose-editor-wrap"
+          onDrop={(event) => void handleEditorDrop(event)}
+          onDragOver={(event) => event.preventDefault()}
         >
-          B
-        </button>
-
-        <button
-          className={`editor-btn italic-btn ${editor.isActive('italic') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleItalic().run();
-          }}
-          title="Italic"
-        >
-          I
-        </button>
-
-        <button
-          className={`editor-btn underline-btn ${editor.isActive('underline') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleUnderline().run();
-          }}
-          title="Underline"
-        >
-          U
-        </button>
-
-        <div className="editor-toolbar-divider" />
-
-        <button
-          className={`editor-btn ${editor.isActive('bulletList') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleBulletList().run();
-          }}
-          title="Bullet list"
-        >
-          •
-        </button>
-
-        <button
-          className={`editor-btn ${editor.isActive('orderedList') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleOrderedList().run();
-          }}
-          title="Numbered list"
-        >
-          1.
-        </button>
-
-        <div className="editor-toolbar-divider" />
-
-        <button
-          className="editor-btn"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().sinkListItem('listItem').run();
-          }}
-          title="Indent"
-        >
-          &gt;
-        </button>
-
-        <button
-          className="editor-btn"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().liftListItem('listItem').run();
-          }}
-          title="Outdent"
-        >
-          &lt;
-        </button>
-
-        <div className="editor-toolbar-divider" />
-
-        <button
-          className={`editor-btn ${editor.isActive('link') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            const currentLink = editor.getAttributes('link').href || '';
-            const nextLink = window.prompt('Enter URL', currentLink);
-
-            if (nextLink === null) return;
-            if (!nextLink.trim()) {
-              editor.chain().focus().unsetLink().run();
-              return;
-            }
-
-            editor.chain().focus().extendMarkRange('link').setLink({ href: nextLink.trim() }).run();
-          }}
-          title="Link"
-        >
-          Link
-        </button>
-
-        <button
-          className="editor-btn"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().unsetAllMarks().clearNodes().run();
-          }}
-          title="Clear formatting"
-        >
-          Clear
-        </button>
-      </div>
-
-      <div
-        className="compose-editor-wrap"
-        onDrop={(event) => void handleEditorDrop(event)}
-        onDragOver={(event) => event.preventDefault()}
-      >
-        <EditorContent editor={editor} className="compose-editor" />
+          <EditorContent editor={editor} className="compose-editor" />
+        </div>
       </div>
 
       {attachments.length > 0 && (
         <div className="compose-attachments">
           {attachments.map((attachment) => (
             <div key={attachment.id || `${attachment.filename}-${attachment.size}`} className="att-chip">
-              <span className="att-icon">📎</span>
-              <span>{attachment.filename}</span>
-              <span>{fmtSize(attachment.size)}</span>
+              <span className="att-icon">Attach</span>
+              <span className="att-name">{attachment.filename}</span>
+              <span className="att-size">{fmtSize(attachment.size)}</span>
               <button
+                className="att-remove"
+                type="button"
                 onClick={() => {
                   setAttachments((prev) => prev.filter((item) => item.id !== attachment.id));
                   markDirty();
@@ -771,21 +873,23 @@ export default function ComposePage() {
       )}
 
       <div className="compose-send-bar">
-        {statusMessage ? (
-          <div className={`send-status ${statusTone}`}>{statusMessage}</div>
-        ) : (
-          <div className="compose-meta">
-            {selectedAccount?.email || 'Select an account'}
-          </div>
-        )}
+        <div className="compose-footer-meta">
+          {statusMessage ? (
+            <div className={`send-status ${statusTone}`}>{statusMessage}</div>
+          ) : (
+            <div className="compose-meta">{fromAccountLabel}</div>
+          )}
+          <div className="compose-shortcut-hint">Ctrl+Enter to send</div>
+        </div>
 
         <div className="send-bar-right">
           <button
             className="discard-btn"
+            type="button"
             onClick={() => {
               if (window.confirm('Discard this draft?')) {
-                if (queryDraftId) {
-                  window.electronAPI?.compose?.deleteDraft?.(queryDraftId);
+                if (draftIdRef.current) {
+                  window.electronAPI?.compose?.deleteDraft?.(draftIdRef.current);
                 }
                 window.close();
               }
@@ -797,9 +901,10 @@ export default function ComposePage() {
           <button
             className="send-btn"
             disabled={sendState === 'sending'}
+            type="button"
             onClick={() => void handleSend()}
           >
-            {sendState === 'sending' ? 'Sending…' : 'Send'}
+            {sendState === 'sending' ? 'Queueing…' : 'Send'}
           </button>
         </div>
       </div>
@@ -831,6 +936,14 @@ function parseAddressInput(raw) {
   return { valid, invalid };
 }
 
+function createDraftId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `draft-${crypto.randomUUID()}`;
+  }
+
+  return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function mergeUniqueEmails(existing, incoming) {
   const output = [];
   const seen = new Set();
@@ -857,22 +970,6 @@ function dedupeAttachments(items) {
   }
 
   return output;
-}
-
-function ensureSignature(bodyHtml, signatureHtml) {
-  const body = String(bodyHtml || '').trim();
-  const signature = String(signatureHtml || '').trim();
-
-  if (!signature) return body || '<p></p>';
-  if (!body) return buildInitialBody(signature);
-  if (body.includes(signature)) return body;
-
-  return `${body}<p></p>${signature}`;
-}
-
-function buildInitialBody(signatureHtml) {
-  const signature = String(signatureHtml || '').trim();
-  return signature ? `<p></p><p></p>${signature}` : '<p></p>';
 }
 
 function validatePayload(payload) {

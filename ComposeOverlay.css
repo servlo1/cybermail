@@ -1,31 +1,29 @@
 /* ── Overlay panels stack from bottom-right ── */
 .compose-overlay-panel {
   position: fixed;
-  bottom: 0;
   width: 520px;
   max-height: 74vh;
   background: var(--bg-secondary);
   border: 1px solid var(--border-accent);
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
+  border-radius: 10px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 -4px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,255,148,0.08);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.56), 0 0 0 1px rgba(0,255,148,0.08);
   z-index: 200;
   animation: slideUpPanel 0.18s cubic-bezier(0.16,1,0.3,1);
   overflow: hidden;
 }
 
 @keyframes slideUpPanel {
-  from { transform: translateY(100%); opacity: 0; }
-  to   { transform: translateY(0);    opacity: 1; }
+  from { transform: translateY(24px) scale(0.98); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
 }
 
 /* Minimized pill */
 .compose-minimized {
   position: fixed;
   bottom: 0;
-  width: 200px;
+  width: 220px;
   height: 36px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-accent);
@@ -55,9 +53,11 @@
   background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  cursor: default;
+  cursor: grab;
   user-select: none;
+  touch-action: none;
 }
+.co-header:active { cursor: grabbing; }
 .co-title {
   font-size: 11px;
   font-weight: 700;
@@ -81,6 +81,7 @@
   cursor: pointer;
   line-height: 1.4;
   transition: all 0.12s;
+  touch-action: manipulation;
 }
 .co-btn:hover { color: var(--text-primary); border-color: var(--border-hover); background: var(--bg-hover); }
 .co-btn-close:hover { color: var(--red); border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.1); }
@@ -93,6 +94,9 @@
   min-height: 32px;
   flex-shrink: 0;
 }
+.co-field-row-from {
+  align-items: stretch;
+}
 .co-label {
   width: 38px;
   padding: 7px 6px 7px 12px;
@@ -103,6 +107,70 @@
   text-transform: uppercase;
   flex-shrink: 0;
 }
+.co-from-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.co-from-display-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.co-from-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+}
+.co-from-name-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.co-from-email {
+  font-size: 12px;
+  color: var(--accent-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.co-from-name-input {
+  min-width: 140px;
+  max-width: 220px;
+  background: transparent;
+  border: 1px solid var(--border-accent);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 4px 7px;
+}
+.co-from-name-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(0,255,148,0.2);
+}
+.co-from-edit-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 0;
+  white-space: nowrap;
+}
+.co-from-edit-btn:hover {
+  color: #00e589;
+}
 .co-from-select {
   flex: 1;
   background: transparent;
@@ -110,7 +178,7 @@
   color: var(--accent-dim);
   font-family: var(--font);
   font-size: 12px;
-  padding: 7px 8px;
+  padding: 7px 8px 8px;
   cursor: pointer;
 }
 .co-from-select option { background: var(--bg-elevated); color: var(--text-primary); }
@@ -171,6 +239,11 @@
   align-self: stretch;
   transition: all 0.12s;
   flex-shrink: 0;
+  touch-action: manipulation;
+}
+.co-field-extras {
+  display: flex;
+  align-self: stretch;
 }
 .co-extra-btn:hover { color: var(--accent); background: var(--accent-glow); }
 
@@ -208,6 +281,7 @@
   cursor: pointer;
   transition: all 0.1s;
   line-height: 1.4;
+  touch-action: manipulation;
 }
 .co-fmt-btn:hover { color: var(--text-primary); background: var(--bg-hover); border-color: var(--border); }
 .co-fmt-btn.active { color: var(--accent); background: var(--accent-glow); border-color: var(--border-accent); }
@@ -295,6 +369,7 @@
   letter-spacing: 0.08em;
   cursor: pointer;
   transition: background 0.12s, box-shadow 0.12s;
+  touch-action: manipulation;
 }
 .co-send-btn:hover {
   background: #00e589;
