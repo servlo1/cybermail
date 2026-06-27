@@ -13,7 +13,7 @@ const AUTOSAVE_MS = 2500;
 export default function ComposePage() {
   const params = new URLSearchParams(window.location.search);
   const queryDraftId = params.get('draftId');
-  const draftId = queryDraftId || `draft-${Date.now()}`;
+  const draftIdRef = useRef(queryDraftId || createDraftId());
   const mode = params.get('mode') || 'new';
 
   const [accounts, setAccounts] = useState([]);
@@ -87,7 +87,7 @@ export default function ComposePage() {
     const parsedBcc = parseAddressInput(bccInput);
 
     return {
-      id: draftId,
+      id: draftIdRef.current,
       mode,
       account_id: selectedAccount?.id || null,
       from_email: selectedAccount?.email || '',
@@ -106,7 +106,7 @@ export default function ComposePage() {
         bcc: parsedBcc.invalid,
       },
     };
-  }, [attachments, bcc, bccInput, cc, ccInput, draftId, fromName, mode, selectedAccount, subject, to, toInput]);
+  }, [attachments, bcc, bccInput, cc, ccInput, fromName, mode, selectedAccount, subject, to, toInput]);
 
   const saveDraft = useCallback(async (silent = true) => {
     if (!window.electronAPI?.compose?.saveDraft || !editor) return null;
@@ -120,6 +120,7 @@ export default function ComposePage() {
         body_text: editor.getText(),
       });
 
+      if (result?.id) draftIdRef.current = result.id;
       dirtyRef.current = false;
 
       if (!silent) setStatus('Draft saved', 'success');
@@ -139,6 +140,7 @@ export default function ComposePage() {
 
       const draft = await window.electronAPI.compose.getDraft(existingDraftId);
       if (!draft) return;
+      if (draft.id) draftIdRef.current = draft.id;
 
       setSubject(draft.subject || '');
       setTo(Array.isArray(draft.to_addresses) ? draft.to_addresses : []);
@@ -296,7 +298,7 @@ export default function ComposePage() {
 
     const finalPayload = {
       ...payload,
-      draft_id: draftId,
+      draft_id: draftIdRef.current,
       body_html: ensureSignature(editor.getHTML(), signatureRef.current),
       body_text: editor.getText(),
       close_after_queue: true,
@@ -304,7 +306,8 @@ export default function ComposePage() {
     };
 
     try {
-      window.electronAPI.compose.send(finalPayload)
+      const sendRequest = window.electronAPI.compose.send(finalPayload);
+      sendRequest
         .then((result) => {
           if (!(result?.queued || result?.accepted || result?.success)) {
             console.warn('[Compose] send result:', result);
@@ -314,13 +317,17 @@ export default function ComposePage() {
           console.error('[Compose] send failed:', error);
         });
 
-      window.electronAPI?.compose?.notifySendQueued?.({
-        draftId,
-        from: finalPayload.from_email,
-        to: finalPayload.to,
-        subject: finalPayload.subject,
-        queuedAt: Date.now(),
-      });
+      try {
+        window.electronAPI?.compose?.notifySendQueued?.({
+          draftId: finalPayload.draft_id || finalPayload.id,
+          from: finalPayload.from_email,
+          to: finalPayload.to,
+          subject: finalPayload.subject,
+          queuedAt: Date.now(),
+        });
+      } catch (error) {
+        console.warn('[Compose] queue notification failed:', error);
+      }
 
       window.close();
     } catch (error) {
@@ -329,7 +336,7 @@ export default function ComposePage() {
       setSendState('error');
       setStatus('Could not queue message', 'error');
     }
-  }, [addAddresses, buildPayload, draftId, editor, setStatus]);
+  }, [addAddresses, buildPayload, editor, setStatus]);
 
   const handleEditorDrop = useCallback(async (event) => {
     const files = Array.from(event.dataTransfer?.files || []);
@@ -387,7 +394,7 @@ export default function ComposePage() {
     };
 
     const onBeforeUnload = () => {
-      if (dirtyRef.current) void saveDraft(true);
+      if (dirtyRef.current && !sendLockRef.current) void saveDraft(true);
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -784,8 +791,8 @@ export default function ComposePage() {
             className="discard-btn"
             onClick={() => {
               if (window.confirm('Discard this draft?')) {
-                if (queryDraftId) {
-                  window.electronAPI?.compose?.deleteDraft?.(queryDraftId);
+                if (draftIdRef.current) {
+                  window.electronAPI?.compose?.deleteDraft?.(draftIdRef.current);
                 }
                 window.close();
               }
@@ -829,6 +836,14 @@ function parseAddressInput(raw) {
   }
 
   return { valid, invalid };
+}
+
+function createDraftId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `draft-${crypto.randomUUID()}`;
+  }
+
+  return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function mergeUniqueEmails(existing, incoming) {
