@@ -1,0 +1,10 @@
+PLACEHOLDER - Replace with actual 256x256 icon.png for production builds.
+
+To create a proper icon:
+1. Design a 1024x1024 PNG icon
+2. Save as assets/icon.png
+3. For Windows: convert to assets/icon.ico (256x256)
+4. For macOS: convert to assets/icon.icns
+
+Tools: https://www.icoconverter.com or ImageMagick:
+  convert icon.png -resize 256x256 icon.ico

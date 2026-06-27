@@ -1,0 +1,49 @@
+{
+  "appId": "com.cybermail.desktop",
+  "productName": "CyberMail",
+  "copyright": "Copyright © 2024 CyberMail",
+  "directories": {
+    "output": "dist",
+    "buildResources": "assets"
+  },
+  "files": [
+    "build/**/*",
+    "electron-main/**/*",
+    "imap-engine/**/*",
+    "smtp-engine/**/*",
+    "sync-worker/**/*",
+    "database/**/*",
+    "auth/**/*",
+    "windows-manager/**/*",
+    "services/**/*",
+    "settings-api/**/*",
+    "utils/**/*",
+    "node_modules/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": [
+      { "target": "nsis", "arch": ["x64"] },
+      { "target": "portable", "arch": ["x64"] }
+    ],
+    "icon": "assets/icon.ico",
+    "artifactName": "${productName}-Setup-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "CyberMail"
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "assets/icon.icns"
+  },
+  "linux": {
+    "target": "AppImage",
+    "icon": "assets/icon.png"
+  },
+  "publish": null
+}
