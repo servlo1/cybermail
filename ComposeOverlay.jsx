@@ -6,6 +6,8 @@ import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import useStore from '../store/useStore';
 import './ComposeOverlay.css';
+import { buildComposeInitialBody } from './composeSignature';
+import { getSignatureSettings } from './signatureApi';
 
 // Global compose state — lives outside React so it survives re-renders
 let _openComposes = [];
@@ -62,10 +64,13 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
   const { accounts, showNotification } = useStore();
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   const [to, setTo] = useState(draft.to || []);
   const [cc, setCc] = useState(draft.cc || []);
+  const [bcc, setBcc] = useState(draft.bcc || []);
   const [subject, setSubject] = useState(draft.subject || '');
   const [showCc, setShowCc] = useState((draft.cc||[]).length > 0);
+  const [showBcc, setShowBcc] = useState((draft.bcc||[]).length > 0);
   const [minimized, setMinimized] = useState(false);
   const [fromAccountId, setFromAccountId] = useState(
     draft.fromAccountId || accounts[0]?.id || null
@@ -96,15 +101,18 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
 
   // Load signature on mount
   useEffect(() => {
-    if (!draft.bodyHtml && window.electronAPI) {
-      window.electronAPI.settings.getSignature().then(sig => {
-        if (sig?.html && editor) {
-          editor.commands.setContent(`<p><br></p><p><br></p>${sig.html}`);
+    if (!draft.bodyHtml) {
+      getSignatureSettings().then(sig => {
+        if (editor) {
+          editor.commands.setContent(buildComposeInitialBody(sig?.html, {
+            replyToId: draft.replyToId,
+            forwardOfId: draft.forwardOfId,
+          }));
           editor.commands.focus('start');
         }
       }).catch(() => {});
     }
-  }, [editor]);
+  }, [draft.bodyHtml, draft.forwardOfId, draft.replyToId, editor]);
 
   useEffect(() => {
     if (!fromAccountId && accounts[0]?.id) {
@@ -140,11 +148,13 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
       from_name: effectiveFromName,
       to: recipients,
       cc,
+      bcc,
       subject,
       body_html: editor?.getHTML() || '',
       body_text: editor?.getText() || '',
       attachment_ids: attachments.map(a => a.id),
       reply_to_id: draft.replyToId,
+      forward_of_id: draft.forwardOfId,
     };
 
     try {
@@ -159,7 +169,7 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     } catch {
       showNotification('Send queued — will retry', 'info');
     }
-  }, [to, toInput, cc, subject, editor, fromAccount, effectiveFromName, attachments, draft, onClose, showNotification]);
+  }, [to, toInput, cc, bcc, subject, editor, fromAccount, effectiveFromName, attachments, draft, onClose, showNotification]);
 
   // Ctrl+Enter sends
   useEffect(() => {
@@ -187,12 +197,14 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
     const emails = raw.split(/[,;\s]+/).filter(e => e.includes('@'));
     if (!emails.length) return;
     if (type === 'to') { setTo(p => [...p, ...emails]); setToInput(''); }
-    else { setCc(p => [...p, ...emails]); setCcInput(''); }
+    else if (type === 'cc') { setCc(p => [...p, ...emails]); setCcInput(''); }
+    else { setBcc(p => [...p, ...emails]); setBccInput(''); }
   }
 
   function removeTag(type, email) {
     if (type === 'to') setTo(p => p.filter(e => e !== email));
-    else setCc(p => p.filter(e => e !== email));
+    else if (type === 'cc') setCc(p => p.filter(e => e !== email));
+    else setBcc(p => p.filter(e => e !== email));
   }
 
   async function handleAttach() {
@@ -368,9 +380,14 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
             onBlur={() => toInput.trim() && addTag('to', toInput)}
           />
         </div>
-        {!showCc && (
-          <button className="co-extra-btn" onClick={() => setShowCc(true)}>CC</button>
-        )}
+        <div className="co-field-extras">
+          {!showCc && (
+            <button className="co-extra-btn" onClick={() => setShowCc(true)}>CC</button>
+          )}
+          {!showBcc && (
+            <button className="co-extra-btn" onClick={() => setShowBcc(true)}>BCC</button>
+          )}
+        </div>
       </div>
 
       {/* CC */}
@@ -392,6 +409,30 @@ function ComposePanel({ draft, stackIndex, total, onClose }) {
                 if (['Enter','Tab',',',' '].includes(e.key)) { e.preventDefault(); addTag('cc', ccInput); }
               }}
               onBlur={() => ccInput.trim() && addTag('cc', ccInput)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* BCC */}
+      {showBcc && (
+        <div className="co-field-row">
+          <span className="co-label">BCC</span>
+          <div className="co-tags-wrap">
+            {bcc.map(e => (
+              <span key={e} className="co-tag">
+                {e}<button onClick={() => removeTag('bcc', e)}>×</button>
+              </span>
+            ))}
+            <input
+              className="co-tag-input"
+              value={bccInput}
+              placeholder="bcc@email.com"
+              onChange={e => setBccInput(e.target.value)}
+              onKeyDown={e => {
+                if (['Enter','Tab',',',' '].includes(e.key)) { e.preventDefault(); addTag('bcc', bccInput); }
+              }}
+              onBlur={() => bccInput.trim() && addTag('bcc', bccInput)}
             />
           </div>
         </div>

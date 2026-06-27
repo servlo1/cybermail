@@ -241,6 +241,10 @@
   flex-shrink: 0;
   touch-action: manipulation;
 }
+.co-field-extras {
+  display: flex;
+  align-self: stretch;
+}
 .co-extra-btn:hover { color: var(--accent); background: var(--accent-glow); }
 
 .co-subject-input {

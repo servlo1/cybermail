@@ -38,7 +38,13 @@ export default function EmailPreview() {
       body_html: buildReplyBody(email),
     });
     const { openCompose } = require("../components/ComposeOverlay");
-    openCompose({ bodyHtml: buildReplyBody(email), subject: `Re: ${email.subject}`, to: [email.from_email], replyToId: email.id });
+    openCompose({
+      id: draft?.id,
+      bodyHtml: buildReplyBody(email),
+      subject: `Re: ${email.subject}`,
+      to: [email.from_email],
+      replyToId: email.id,
+    });
   }
 
   async function handleForward() {
@@ -50,7 +56,12 @@ export default function EmailPreview() {
       body_html: buildForwardBody(email),
     });
     const { openCompose } = require("../components/ComposeOverlay");
-    openCompose({ bodyHtml: buildReplyBody(email), subject: `Re: ${email.subject}`, to: [email.from_email], replyToId: email.id });
+    openCompose({
+      id: draft?.id,
+      bodyHtml: buildForwardBody(email),
+      subject: `Fwd: ${email.subject}`,
+      forwardOfId: email.id,
+    });
   }
 
   async function handleDelete() {

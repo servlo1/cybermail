@@ -5,6 +5,8 @@ import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import './ComposeWindow.css';
+import { buildComposeInitialBody, prepareComposeBody } from './composeSignature';
+import { getSignatureSettings } from './signatureApi';
 
 const EMAIL_RE = /^[^\s@<>(),;:"']+@[^\s@<>(),;:"']+\.[^\s@<>(),;:"']+$/i;
 const ADDRESS_SPLIT_RE = /[,;\s]+/;
@@ -15,6 +17,8 @@ export default function ComposePage() {
   const queryDraftId = params.get('draftId');
   const draftIdRef = useRef(queryDraftId || createDraftId());
   const mode = params.get('mode') || 'new';
+  const initialReplyToId = params.get('replyToId');
+  const initialForwardOfId = params.get('forwardOfId');
 
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -25,6 +29,8 @@ export default function ComposePage() {
   const [subject, setSubject] = useState('');
   const [templates, setTemplates] = useState([]);
   const [attachments, setAttachments] = useState([]);
+  const [replyToId, setReplyToId] = useState(initialReplyToId || null);
+  const [forwardOfId, setForwardOfId] = useState(initialForwardOfId || null);
 
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
@@ -100,13 +106,15 @@ export default function ComposePage() {
       bcc_input: bccInput,
       subject: subject.trim(),
       attachment_ids: attachments.map((item) => item.id),
+      reply_to_id: replyToId,
+      forward_of_id: forwardOfId,
       invalid_inputs: {
         to: parsedTo.invalid,
         cc: parsedCc.invalid,
         bcc: parsedBcc.invalid,
       },
     };
-  }, [attachments, bcc, bccInput, cc, ccInput, fromName, mode, selectedAccount, subject, to, toInput]);
+  }, [attachments, bcc, bccInput, cc, ccInput, forwardOfId, fromName, mode, replyToId, selectedAccount, subject, to, toInput]);
 
   const saveDraft = useCallback(async (silent = true) => {
     if (!window.electronAPI?.compose?.saveDraft || !editor) return null;
@@ -116,7 +124,11 @@ export default function ComposePage() {
 
       const result = await window.electronAPI.compose.saveDraft({
         ...payload,
-        body_html: ensureSignature(editor.getHTML(), signatureRef.current),
+        body_html: prepareComposeBody(editor.getHTML(), signatureRef.current, {
+          mode,
+          replyToId,
+          forwardOfId,
+        }),
         body_text: editor.getText(),
       });
 
@@ -151,6 +163,8 @@ export default function ComposePage() {
       setBccInput(draft.bcc_input || '');
       setAttachments(Array.isArray(draft.attachments) ? draft.attachments : []);
       setFromName(draft.from_name || '');
+      setReplyToId(draft.reply_to_id || null);
+      setForwardOfId(draft.forward_of_id || null);
       setShowCC(Boolean((draft.cc_addresses || []).length || draft.cc_input));
       setShowBCC(Boolean((draft.bcc_addresses || []).length || draft.bcc_input));
       setShowFromName(Boolean(draft.from_name));
@@ -161,7 +175,11 @@ export default function ComposePage() {
       }
 
       editor.commands.setContent(
-        draft.body_html || buildInitialBody(signatureRef.current)
+        draft.body_html || buildComposeInitialBody(signatureRef.current, {
+          mode,
+          replyToId: draft.reply_to_id,
+          forwardOfId: draft.forward_of_id,
+        })
       );
 
       setFieldErrors({ to: '', cc: '', bcc: '', from: '' });
@@ -249,12 +267,18 @@ export default function ComposePage() {
 
     if (template?.subject) setSubject(template.subject);
 
-    const html = ensureSignature(template?.body_html || '', signatureRef.current);
-    editor.commands.setContent(html || buildInitialBody(signatureRef.current));
+    const html = prepareComposeBody(template?.body_html || '', signatureRef.current, {
+      mode,
+      replyToId,
+      forwardOfId,
+    });
+    editor.commands.setContent(
+      html || buildComposeInitialBody(signatureRef.current, { mode, replyToId, forwardOfId })
+    );
     setShowTemplates(false);
     markDirty();
     setStatus('Template inserted', 'success');
-  }, [editor, markDirty, setStatus]);
+  }, [editor, forwardOfId, markDirty, mode, replyToId, setStatus]);
 
   const toggleAlwaysOnTop = useCallback(() => {
     const next = !alwaysOnTop;
@@ -299,7 +323,11 @@ export default function ComposePage() {
     const finalPayload = {
       ...payload,
       draft_id: draftIdRef.current,
-      body_html: ensureSignature(editor.getHTML(), signatureRef.current),
+      body_html: prepareComposeBody(editor.getHTML(), signatureRef.current, {
+        mode,
+        replyToId,
+        forwardOfId,
+      }),
       body_text: editor.getText(),
       close_after_queue: true,
       sent_from_window: 'compose',
@@ -336,7 +364,7 @@ export default function ComposePage() {
       setSendState('error');
       setStatus('Could not queue message', 'error');
     }
-  }, [addAddresses, buildPayload, editor, setStatus]);
+  }, [addAddresses, buildPayload, editor, forwardOfId, mode, replyToId, setStatus]);
 
   const handleEditorDrop = useCallback(async (event) => {
     const files = Array.from(event.dataTransfer?.files || []);
@@ -355,7 +383,7 @@ export default function ComposePage() {
         const [accountList, templateList, signature] = await Promise.all([
           window.electronAPI.accounts?.list?.() || [],
           window.electronAPI.settings?.getTemplates?.() || [],
-          window.electronAPI.settings?.getSignature?.().catch(() => null),
+          getSignatureSettings(),
         ]);
 
         if (cancelled) return;
@@ -371,7 +399,13 @@ export default function ComposePage() {
           const account = nextAccounts[0] || null;
           setSelectedAccount(account);
           setFromName(account?.display_name || account?.name || '');
-          editor.commands.setContent(buildInitialBody(signatureRef.current));
+          editor.commands.setContent(
+            buildComposeInitialBody(signatureRef.current, {
+              mode,
+              replyToId,
+              forwardOfId,
+            })
+          );
           dirtyRef.current = false;
         }
       } catch (error) {
@@ -406,7 +440,7 @@ export default function ComposePage() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('beforeunload', onBeforeUnload);
     };
-  }, [editor, handleSend, loadDraft, queryDraftId, saveDraft, setStatus]);
+  }, [editor, forwardOfId, handleSend, loadDraft, mode, queryDraftId, replyToId, saveDraft, setStatus]);
 
   if (!editor) {
     return (
@@ -936,22 +970,6 @@ function dedupeAttachments(items) {
   }
 
   return output;
-}
-
-function ensureSignature(bodyHtml, signatureHtml) {
-  const body = String(bodyHtml || '').trim();
-  const signature = String(signatureHtml || '').trim();
-
-  if (!signature) return body || '<p></p>';
-  if (!body) return buildInitialBody(signature);
-  if (body.includes(signature)) return body;
-
-  return `${body}<p></p>${signature}`;
-}
-
-function buildInitialBody(signatureHtml) {
-  const signature = String(signatureHtml || '').trim();
-  return signature ? `<p></p><p></p>${signature}` : '<p></p>';
 }
 
 function validatePayload(payload) {

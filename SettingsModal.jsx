@@ -3,6 +3,7 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import useStore from '../store/useStore';
 import './Modal.css';
+import { getSignatureSettings, setSignatureSettings } from './signatureApi';
 
 export default function SettingsModal({ onClose }) {
   const { accounts, showNotification } = useStore();
@@ -24,11 +25,10 @@ export default function SettingsModal({ onClose }) {
   }, []);
 
   async function loadAll() {
-    if (!window.electronAPI) return;
     const [sig, tpls, cfg] = await Promise.all([
-      window.electronAPI.settings.getSignature(),
-      window.electronAPI.settings.getTemplates(),
-      window.electronAPI.settings.get(),
+      getSignatureSettings(),
+      window.electronAPI?.settings?.getTemplates?.() || [],
+      window.electronAPI?.settings?.get?.() || {},
     ]);
     setSigHtml(sig?.html || '');
     setSigPlain(sig?.plain_text || '');
@@ -38,7 +38,7 @@ export default function SettingsModal({ onClose }) {
   }
 
   async function saveSignature() {
-    await window.electronAPI?.settings.setSignature({ html: sigHtml, plain_text: sigPlain });
+    await setSignatureSettings({ html: sigHtml, plain_text: sigPlain });
     showNotification('Signature saved', 'success');
   }
 
@@ -91,7 +91,7 @@ export default function SettingsModal({ onClose }) {
             {tab === 'signature' && (
               <div>
                 <div className="settings-section-title">Email Signature</div>
-                <p className="settings-hint">Appended to new messages and replies automatically.</p>
+                <p className="settings-hint">Inserted automatically for new messages only.</p>
                 <div className="sig-editor-wrap">
                   {sigEditor && <EditorContent editor={sigEditor} className="sig-editor" />}
                 </div>
