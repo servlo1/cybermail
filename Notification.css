@@ -1,0 +1,41 @@
+.notification {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  z-index: 9000;
+  animation: slideInRight 0.2s ease, fadeOut 0.3s ease 3.7s forwards;
+  max-width: 340px;
+  box-shadow: var(--shadow-md);
+}
+.notification-success {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-accent);
+  color: var(--accent);
+}
+.notification-error {
+  background: var(--bg-elevated);
+  border: 1px solid rgba(239,68,68,0.4);
+  color: var(--red);
+}
+.notification-info {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.notification-warning {
+  background: var(--bg-elevated);
+  border: 1px solid rgba(234,179,8,0.4);
+  color: var(--yellow);
+}
+.notif-icon { font-size: 14px; flex-shrink: 0; }
+.notif-msg { flex: 1; }
+
+@keyframes fadeOut {
+  to { opacity: 0; transform: translateX(8px); }
+}
