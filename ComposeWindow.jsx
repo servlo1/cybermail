@@ -409,49 +409,82 @@ export default function ComposePage() {
   }, [editor, handleSend, loadDraft, queryDraftId, saveDraft, setStatus]);
 
   if (!editor) {
-    return <div className="compose-loading">Initializing compose window…</div>;
+    return (
+      <div className="compose-loading">
+        <div className="compose-loading-inner">
+          <span className="compose-loading-mark">◈</span>
+          <span>Initializing compose window…</span>
+        </div>
+      </div>
+    );
   }
+
+  const windowTitle = subject.trim() || 'New message';
+  const fromAccountLabel = selectedAccount?.email || 'Select an account';
+  const templateLabel = templates.length === 1 ? '1 template' : `${templates.length} templates`;
+  const attachmentLabel = attachments.length === 1 ? '1 attachment' : `${attachments.length} attachments`;
 
   return (
     <div className="compose-window">
-      <div className="compose-toolbar">
-        <div className="compose-toolbar-left">
-          <div className="compose-title">{subject || 'NEW MESSAGE'}</div>
+      <div className="compose-header">
+        <div className="compose-header-copy">
+          <div className="compose-kicker">Compose</div>
+          <div className="compose-title-row">
+            <div className="compose-title">{windowTitle}</div>
+            <span className={`compose-state-pill ${sendState === 'sending' ? 'sending' : ''}`}>
+              {sendState === 'sending' ? 'Queueing' : 'Ready'}
+            </span>
+          </div>
+          <div className="compose-header-meta">
+            <span className="compose-meta-pill">{fromAccountLabel}</span>
+            <span className="compose-meta-pill">{templateLabel}</span>
+            <span className="compose-meta-pill">{attachmentLabel}</span>
+          </div>
         </div>
 
-        <div className="compose-toolbar-right">
+        <div className="compose-header-actions">
           <button
-            className={`toolbar-btn ${alwaysOnTop ? 'active' : ''}`}
+            className={`toolbar-btn compact ${alwaysOnTop ? 'active' : ''}`}
             onClick={toggleAlwaysOnTop}
             title="Pin window"
+            data-tooltip="Always on top"
+            type="button"
           >
             Pin
           </button>
           <button
-            className="toolbar-btn"
+            className="toolbar-btn compact"
             onClick={() => void saveDraft(false)}
             title="Save draft"
+            data-tooltip="Save draft"
+            type="button"
           >
             Save
           </button>
           <button
-            className="toolbar-btn"
+            className="toolbar-btn compact"
             onClick={() => void handleAttach()}
             title="Attach files"
+            data-tooltip="Attach files"
+            type="button"
           >
             Attach
           </button>
           <button
-            className={`toolbar-btn ${showFromName ? 'active' : ''}`}
+            className={`toolbar-btn compact ${showFromName ? 'active' : ''}`}
             onClick={() => setShowFromName((prev) => !prev)}
             title="Toggle From Name"
+            data-tooltip="Display name"
+            type="button"
           >
-            Name
+            From Name
           </button>
           <button
-            className={`toolbar-btn ${showTemplates ? 'active' : ''}`}
+            className={`toolbar-btn compact ${showTemplates ? 'active' : ''}`}
             onClick={() => setShowTemplates((prev) => !prev)}
             title="Templates"
+            data-tooltip="Insert template"
+            type="button"
           >
             Templates
           </button>
@@ -460,7 +493,10 @@ export default function ComposePage() {
 
       {showTemplates && (
         <div className="template-dropdown">
-          <div className="template-header">Insert Template</div>
+          <div className="template-header-row">
+            <div className="template-header">Insert Template</div>
+            <div className="template-count">{templates.length}</div>
+          </div>
           {templates.length === 0 ? (
             <div className="template-empty">No templates saved.</div>
           ) : (
@@ -469,6 +505,7 @@ export default function ComposePage() {
                 key={template.id || template.name}
                 className="template-item"
                 onClick={() => insertTemplate(template)}
+                type="button"
               >
                 {template.name}
               </button>
@@ -493,6 +530,14 @@ export default function ComposePage() {
                 </option>
               ))}
             </select>
+
+            <button
+              className={`inline-toggle ${showFromName ? 'active' : ''}`}
+              onClick={() => setShowFromName((prev) => !prev)}
+              type="button"
+            >
+              Name
+            </button>
 
             {showFromName && (
               <input
@@ -543,12 +588,12 @@ export default function ComposePage() {
 
           <div className="field-extras">
             {!showCC && (
-              <button className="extra-btn" onClick={() => setShowCC(true)}>
+              <button className="extra-btn" onClick={() => setShowCC(true)} type="button">
                 CC
               </button>
             )}
             {!showBCC && (
-              <button className="extra-btn" onClick={() => setShowBCC(true)}>
+              <button className="extra-btn" onClick={() => setShowBCC(true)} type="button">
                 BCC
               </button>
             )}
@@ -633,138 +678,154 @@ export default function ComposePage() {
         </div>
       </div>
 
-      <div className="editor-toolbar">
-        <button
-          className={`editor-btn ${editor.isActive('bold') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleBold().run();
-          }}
-          title="Bold"
+      <div className="compose-editor-panel">
+        <div className="editor-toolbar">
+          <button
+            className={`editor-btn ${editor.isActive('bold') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleBold().run();
+            }}
+            title="Bold"
+            type="button"
+          >
+            B
+          </button>
+
+          <button
+            className={`editor-btn italic-btn ${editor.isActive('italic') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleItalic().run();
+            }}
+            title="Italic"
+            type="button"
+          >
+            I
+          </button>
+
+          <button
+            className={`editor-btn underline-btn ${editor.isActive('underline') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleUnderline().run();
+            }}
+            title="Underline"
+            type="button"
+          >
+            U
+          </button>
+
+          <div className="editor-toolbar-divider" />
+
+          <button
+            className={`editor-btn ${editor.isActive('bulletList') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleBulletList().run();
+            }}
+            title="Bullet list"
+            type="button"
+          >
+            •
+          </button>
+
+          <button
+            className={`editor-btn ${editor.isActive('orderedList') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().toggleOrderedList().run();
+            }}
+            title="Numbered list"
+            type="button"
+          >
+            1.
+          </button>
+
+          <div className="editor-toolbar-divider" />
+
+          <button
+            className="editor-btn"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().sinkListItem('listItem').run();
+            }}
+            title="Indent"
+            type="button"
+          >
+            &gt;
+          </button>
+
+          <button
+            className="editor-btn"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().liftListItem('listItem').run();
+            }}
+            title="Outdent"
+            type="button"
+          >
+            &lt;
+          </button>
+
+          <div className="editor-toolbar-divider" />
+
+          <button
+            className={`editor-btn ${editor.isActive('link') ? 'active' : ''}`}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              const currentLink = editor.getAttributes('link').href || '';
+              const nextLink = window.prompt('Enter URL', currentLink);
+
+              if (nextLink === null) return;
+              if (!nextLink.trim()) {
+                editor.chain().focus().unsetLink().run();
+                return;
+              }
+
+              editor.chain().focus().extendMarkRange('link').setLink({ href: nextLink.trim() }).run();
+            }}
+            title="Link"
+            type="button"
+          >
+            Link
+          </button>
+
+          <button
+            className="editor-btn"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              editor.chain().focus().unsetAllMarks().clearNodes().run();
+            }}
+            title="Clear formatting"
+            type="button"
+          >
+            Clear
+          </button>
+
+          <div className="editor-toolbar-spacer" />
+          <div className="editor-toolbar-hint">Drop files here or press Ctrl+Enter to send</div>
+        </div>
+
+        <div
+          className="compose-editor-wrap"
+          onDrop={(event) => void handleEditorDrop(event)}
+          onDragOver={(event) => event.preventDefault()}
         >
-          B
-        </button>
-
-        <button
-          className={`editor-btn italic-btn ${editor.isActive('italic') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleItalic().run();
-          }}
-          title="Italic"
-        >
-          I
-        </button>
-
-        <button
-          className={`editor-btn underline-btn ${editor.isActive('underline') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleUnderline().run();
-          }}
-          title="Underline"
-        >
-          U
-        </button>
-
-        <div className="editor-toolbar-divider" />
-
-        <button
-          className={`editor-btn ${editor.isActive('bulletList') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleBulletList().run();
-          }}
-          title="Bullet list"
-        >
-          •
-        </button>
-
-        <button
-          className={`editor-btn ${editor.isActive('orderedList') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().toggleOrderedList().run();
-          }}
-          title="Numbered list"
-        >
-          1.
-        </button>
-
-        <div className="editor-toolbar-divider" />
-
-        <button
-          className="editor-btn"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().sinkListItem('listItem').run();
-          }}
-          title="Indent"
-        >
-          &gt;
-        </button>
-
-        <button
-          className="editor-btn"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().liftListItem('listItem').run();
-          }}
-          title="Outdent"
-        >
-          &lt;
-        </button>
-
-        <div className="editor-toolbar-divider" />
-
-        <button
-          className={`editor-btn ${editor.isActive('link') ? 'active' : ''}`}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            const currentLink = editor.getAttributes('link').href || '';
-            const nextLink = window.prompt('Enter URL', currentLink);
-
-            if (nextLink === null) return;
-            if (!nextLink.trim()) {
-              editor.chain().focus().unsetLink().run();
-              return;
-            }
-
-            editor.chain().focus().extendMarkRange('link').setLink({ href: nextLink.trim() }).run();
-          }}
-          title="Link"
-        >
-          Link
-        </button>
-
-        <button
-          className="editor-btn"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            editor.chain().focus().unsetAllMarks().clearNodes().run();
-          }}
-          title="Clear formatting"
-        >
-          Clear
-        </button>
-      </div>
-
-      <div
-        className="compose-editor-wrap"
-        onDrop={(event) => void handleEditorDrop(event)}
-        onDragOver={(event) => event.preventDefault()}
-      >
-        <EditorContent editor={editor} className="compose-editor" />
+          <EditorContent editor={editor} className="compose-editor" />
+        </div>
       </div>
 
       {attachments.length > 0 && (
         <div className="compose-attachments">
           {attachments.map((attachment) => (
             <div key={attachment.id || `${attachment.filename}-${attachment.size}`} className="att-chip">
-              <span className="att-icon">📎</span>
-              <span>{attachment.filename}</span>
-              <span>{fmtSize(attachment.size)}</span>
+              <span className="att-icon">Attach</span>
+              <span className="att-name">{attachment.filename}</span>
+              <span className="att-size">{fmtSize(attachment.size)}</span>
               <button
+                className="att-remove"
+                type="button"
                 onClick={() => {
                   setAttachments((prev) => prev.filter((item) => item.id !== attachment.id));
                   markDirty();
@@ -778,17 +839,19 @@ export default function ComposePage() {
       )}
 
       <div className="compose-send-bar">
-        {statusMessage ? (
-          <div className={`send-status ${statusTone}`}>{statusMessage}</div>
-        ) : (
-          <div className="compose-meta">
-            {selectedAccount?.email || 'Select an account'}
-          </div>
-        )}
+        <div className="compose-footer-meta">
+          {statusMessage ? (
+            <div className={`send-status ${statusTone}`}>{statusMessage}</div>
+          ) : (
+            <div className="compose-meta">{fromAccountLabel}</div>
+          )}
+          <div className="compose-shortcut-hint">Ctrl+Enter to send</div>
+        </div>
 
         <div className="send-bar-right">
           <button
             className="discard-btn"
+            type="button"
             onClick={() => {
               if (window.confirm('Discard this draft?')) {
                 if (draftIdRef.current) {
@@ -804,9 +867,10 @@ export default function ComposePage() {
           <button
             className="send-btn"
             disabled={sendState === 'sending'}
+            type="button"
             onClick={() => void handleSend()}
           >
-            {sendState === 'sending' ? 'Sending…' : 'Send'}
+            {sendState === 'sending' ? 'Queueing…' : 'Send'}
           </button>
         </div>
       </div>
